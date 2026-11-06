@@ -7,7 +7,9 @@ without them the sensor continues with connection polling alone.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -22,6 +24,18 @@ log = logging.getLogger(__name__)
 _REMOTE_STATES = {psutil.CONN_ESTABLISHED, psutil.CONN_SYN_SENT}
 _SEEN_TTL_SECONDS = 600
 _DNS_TTL_SECONDS = 60
+
+
+def is_local(ip: str) -> bool:
+    """Loopback in any spelling, including IPv4-mapped IPv6 such as ::ffff:127.0.0.1."""
+    try:
+        address = ipaddress.ip_address(ip.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address.is_loopback or bool(mapped and mapped.is_loopback)
+
+
 _QTYPES = {1: "A", 2: "NS", 5: "CNAME", 15: "MX", 16: "TXT", 28: "AAAA", 33: "SRV", 255: "ANY"}
 
 
@@ -51,7 +65,7 @@ class NetworkSniffer(threading.Thread):
             if not conn.raddr or conn.status not in _REMOTE_STATES:
                 continue
             # Loopback is local plumbing, not something leaving the machine.
-            if conn.raddr.ip.startswith("127.") or conn.raddr.ip == "::1":
+            if is_local(conn.raddr.ip):
                 continue
             key = (conn.pid, conn.raddr.ip, conn.raddr.port)
             if key in self._seen:
@@ -71,7 +85,7 @@ class NetworkSniffer(threading.Thread):
                         "src_port": conn.laddr.port if conn.laddr else None,
                         "dst_ip": conn.raddr.ip,
                         "dst_port": conn.raddr.port,
-                        "proto": "tcp" if conn.type == 1 else "udp",
+                        "proto": "tcp" if conn.type == socket.SOCK_STREAM else "udp",
                         "pid": conn.pid,
                         "process_name": name,
                         "status": conn.status,
