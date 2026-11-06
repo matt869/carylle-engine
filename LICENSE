@@ -1,0 +1,11 @@
+Copyright (c) 2026 the Carylle authors. All rights reserved.
+
+This software is proprietary. No license is granted to use, copy, modify or distribute it
+without written permission from the copyright holder.
+
+Replace this file with an open source license if you intend to publish the project.
+
+---
+
+data/mitre/enterprise-attack.json is the MITRE ATT&CK dataset, copyright The MITRE
+Corporation, redistributed under the ATT&CK Terms of Use: https://attack.mitre.org/resources/legal-and-branding/terms-of-use/

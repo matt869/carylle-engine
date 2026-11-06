@@ -1,0 +1,57 @@
+# Install:
+#   python3 -m venv /opt/carylle/venv
+#   /opt/carylle/venv/bin/pip install '/path/to/carylle[agent-full]'
+#   cp -r config /etc/carylle/            # settings.yaml, safelist.yaml, yara/
+#   Put CARYLLE_SERVER_URL, CARYLLE_AGENT_ID, CARYLLE_AGENT_TOKEN and
+#   CARYLLE_COMMAND_PUBLIC_KEY in /etc/carylle/agent.env (chmod 600), then:
+#   systemctl enable --now carylle-agent
+[Unit]
+Description=Carylle endpoint agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/lib/carylle
+EnvironmentFile=/etc/carylle/agent.env
+Environment=CARYLLE_CONFIG=/etc/carylle/settings.yaml
+ExecStart=/opt/carylle/venv/bin/carylle-agent --config /etc/carylle/settings.yaml
+Restart=always
+RestartSec=5
+# The agent must outlive most of what it watches. Keep it off the OOM killer's shortlist.
+OOMScoreAdjust=-500
+
+# Runs as root, since it must inspect and act on every process. Capabilities cap that:
+#   CAP_KILL             terminate processes owned by other users
+#   CAP_SYS_PTRACE       read /proc/<pid>/exe and cmdline of other users' processes
+#   CAP_DAC_READ_SEARCH  read files to hash and scan them
+#   CAP_DAC_OVERRIDE     move malicious files out of other users' directories
+#   CAP_FOWNER           set permissions on quarantined files
+#   CAP_CHOWN            restore original ownership when a file is restored
+#   CAP_NET_RAW          capture DNS queries
+CapabilityBoundingSet=CAP_KILL CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_NET_RAW
+AmbientCapabilities=CAP_KILL CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_FOWNER CAP_CHOWN CAP_NET_RAW
+
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_PACKET AF_NETLINK
+StateDirectory=carylle
+StateDirectoryMode=0700
+UMask=0077
+
+# Do not use ProtectSystem or ProtectHome here. They would hide the files the agent watches,
+# and stop it quarantining files outside its own directory.
+
+[Install]
+WantedBy=multi-user.target

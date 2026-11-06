@@ -1,0 +1,91 @@
+# Which response actions a verdict is allowed to lead to. The first matching playbook wins.
+#
+# A playbook only permits an action type. The concrete target still has to come from
+# observed evidence, and guardrails still decide whether it runs, waits or is denied.
+#
+# match.techniques uses prefix matching: T1059 also matches T1059.004.
+# requires_approval: true holds the action for an operator even in autonomous mode.
+
+playbooks:
+  - id: impact-ransomware
+    description: Destructive activity, where containment speed matters most.
+    match:
+      techniques: [T1486, T1490]
+      min_severity: high
+    actions:
+      - { type: notify }
+      - { type: terminate_process }
+      - { type: quarantine_file }
+
+  - id: known-malicious-file
+    description: A file matched a high-confidence YARA rule.
+    match:
+      rules: [yara_match_high]
+      min_severity: high
+    actions:
+      - { type: notify }
+      - { type: quarantine_file }
+      - { type: terminate_process }
+
+  - id: interactive-c2
+    description: Reverse shells, web shells and download-and-execute chains.
+    match:
+      techniques: [T1059, T1105, T1505.003, T1571]
+      min_severity: high
+    actions:
+      - { type: notify }
+      - { type: terminate_process }
+      - { type: quarantine_file, requires_approval: true }
+
+  - id: credential-access
+    description: Credential theft. Killing the process does not undo exposure, so a human reviews.
+    match:
+      techniques: [T1003]
+      min_severity: high
+    actions:
+      - { type: notify }
+      - { type: terminate_process }
+
+  - id: persistence
+    description: Persistence changes. Removing a config file can break a host, so a human reviews.
+    match:
+      techniques: [T1053, T1543, T1098, T1136, T1546, T1547]
+      min_severity: medium
+    actions:
+      - { type: notify }
+      - { type: terminate_process, requires_approval: true }
+      - { type: quarantine_file, requires_approval: true }
+
+  - id: resource-hijack
+    description: Cryptomining.
+    match:
+      techniques: [T1496]
+      min_severity: medium
+    actions:
+      - { type: notify }
+      - { type: terminate_process }
+      - { type: quarantine_file, requires_approval: true }
+
+  - id: defense-evasion
+    description: Security tooling or logs tampered with.
+    match:
+      techniques: [T1685, T1070, T1036, T1027]
+      min_severity: medium
+    actions:
+      - { type: notify }
+      - { type: terminate_process, requires_approval: true }
+
+  - id: high-severity-catch-all
+    description: Serious, but no specific playbook applies. A human decides.
+    match:
+      min_severity: high
+    actions:
+      - { type: notify }
+      - { type: terminate_process, requires_approval: true }
+      - { type: quarantine_file, requires_approval: true }
+
+  - id: default-notify
+    description: Everything else is surfaced for review only.
+    match: {}
+    actions:
+      - { type: notify }

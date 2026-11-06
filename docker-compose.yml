@@ -1,0 +1,30 @@
+# Production server. Generate secrets and a certificate first:
+#   carylle-admin init-env > .env
+#   carylle-admin gen-cert --host your.server.name --out deploy/tls
+services:
+  server:
+    build:
+      context: .
+      dockerfile: deploy/docker/server.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CARYLLE_TLS_CERT: /tls/cert.pem
+      CARYLLE_TLS_KEY: /tls/key.pem
+    ports:
+      - "8443:8443"
+    volumes:
+      - carylle-state:/app/var
+      - ./deploy/tls:/tls:ro
+      # Edit the safelist and playbooks without rebuilding the image.
+      - ./config:/app/config:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  carylle-state:

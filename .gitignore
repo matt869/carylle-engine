@@ -1,0 +1,26 @@
+# Secrets. Never commit these.
+.env
+.env.*
+!.env.example
+deploy/tls/
+
+# Runtime state
+var/
+*.db
+*.db-wal
+*.db-shm
+*.anchor
+quarantine/
+spool/
+purple-report.*
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage

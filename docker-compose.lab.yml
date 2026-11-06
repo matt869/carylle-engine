@@ -1,0 +1,79 @@
+# Isolated purple team lab. The network has no route out, so nothing here can reach the
+# internet, and no ports are published to the host.
+#
+#   carylle-admin init-env --lab > .env.lab
+#   docker compose --env-file .env.lab -f docker-compose.lab.yml up -d --build
+#   docker compose --env-file .env.lab -f docker-compose.lab.yml run --rm purple
+#   docker compose --env-file .env.lab -f docker-compose.lab.yml exec victim \
+#       python -m purple.runner --mode live --server http://server:8443 --report /tmp/purple-live
+#
+# The LLM can't be reached from here, so the lab exercises the deterministic path. The
+# LLM path is tested in tests/, against a model that is deliberately compromised.
+name: carylle-lab
+
+x-secrets: &secrets
+  CARYLLE_AGENT_MASTER_SECRET: ${CARYLLE_AGENT_MASTER_SECRET:?run carylle-admin init-env --lab}
+  CARYLLE_OPERATOR_TOKEN: ${CARYLLE_OPERATOR_TOKEN:?run carylle-admin init-env --lab}
+  CARYLLE_LEDGER_KEY: ${CARYLLE_LEDGER_KEY:?run carylle-admin init-env --lab}
+  CARYLLE_COMMAND_SIGNING_KEY: ${CARYLLE_COMMAND_SIGNING_KEY:?run carylle-admin init-env --lab}
+  CARYLLE_COMMAND_PUBLIC_KEY: ${CARYLLE_COMMAND_PUBLIC_KEY:?run carylle-admin init-env --lab}
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: deploy/docker/server.Dockerfile
+    environment:
+      <<: *secrets
+      CARYLLE_ALLOW_PLAINTEXT: "true"
+      CARYLLE_LLM_ENABLED: "false"
+      CARYLLE_RESPONSE_MODE: autonomous
+      # The synthetic scenarios all report from one "host", so lift the per-host limit.
+      CARYLLE_CONFIG: /app/config/settings.lab.yaml
+    volumes:
+      - ./config/settings.lab.yaml:/app/config/settings.lab.yaml:ro
+    networks: [lab]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  victim:
+    build:
+      context: .
+      dockerfile: deploy/docker/agent.Dockerfile
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      CARYLLE_SERVER_URL: http://server:8443
+      CARYLLE_ALLOW_INSECURE_HTTP: "true"
+      CARYLLE_AGENT_ID: lab-victim
+      CARYLLE_AGENT_TOKEN: ${CARYLLE_VICTIM_TOKEN:?run carylle-admin init-env --lab}
+      CARYLLE_COMMAND_PUBLIC_KEY: ${CARYLLE_COMMAND_PUBLIC_KEY}
+      CARYLLE_OPERATOR_TOKEN: ${CARYLLE_OPERATOR_TOKEN}
+      CARYLLE_ACTUATORS_ENABLED: "true"
+      CARYLLE_WATCH_PATHS: /tmp
+      CARYLLE_LAB: "1"
+    networks: [lab]
+    cap_drop: [ALL]
+    cap_add: [KILL, DAC_OVERRIDE, FOWNER, SYS_PTRACE]
+    security_opt: ["no-new-privileges:true"]
+
+  purple:
+    build:
+      context: .
+      dockerfile: deploy/docker/agent.Dockerfile
+    profiles: [tools]
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      CARYLLE_OPERATOR_TOKEN: ${CARYLLE_OPERATOR_TOKEN}
+      CARYLLE_PURPLE_TOKEN: ${CARYLLE_PURPLE_TOKEN:?run carylle-admin init-env --lab}
+    command: ["python", "-m", "purple.runner", "--mode", "synthetic", "--server", "http://server:8443", "--report", "/tmp/purple-synthetic"]
+    networks: [lab]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  lab:
+    internal: true

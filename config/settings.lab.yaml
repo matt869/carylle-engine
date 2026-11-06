@@ -1,0 +1,14 @@
+# Lab-only overrides, used by docker-compose.lab.yml. Do not use this in production:
+# it binds to all interfaces in plain HTTP and allows far more actions per host.
+server:
+  host: 0.0.0.0
+  allow_plaintext: true
+
+llm:
+  enabled: false
+
+response:
+  mode: autonomous
+  max_actions_per_host_per_hour: 1000
+  max_actions_per_hour: 1000
+  max_hosts_per_10min: 100

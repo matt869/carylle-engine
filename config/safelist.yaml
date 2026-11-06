@@ -1,0 +1,55 @@
+# Targets Carylle must never act on, whatever a verdict says.
+# Enforced twice: by server guardrails and again by the agent right before acting.
+#
+# Processes are protected by full executable path and never by name. A name is
+# attacker-controlled, so a safelisted "sshd" would let /tmp/sshd walk through.
+# Do not add interpreters (bash, python, powershell) here: they are what attackers run.
+
+hosts: []
+
+processes:
+  exe_paths:
+    # Linux init and core services
+    - /sbin/init
+    - /lib/systemd/systemd
+    - /usr/lib/systemd/systemd
+    - /usr/lib/systemd/systemd-journald
+    - /usr/lib/systemd/systemd-logind
+    - /usr/sbin/sshd
+    - /usr/sbin/dockerd
+    - /usr/bin/dockerd
+    - /usr/bin/containerd
+    - /usr/sbin/auditd
+    # Windows core
+    - C:\Windows\System32\smss.exe
+    - C:\Windows\System32\csrss.exe
+    - C:\Windows\System32\wininit.exe
+    - C:\Windows\System32\winlogon.exe
+    - C:\Windows\System32\services.exe
+    - C:\Windows\System32\lsass.exe
+    - C:\Windows\explorer.exe
+  # Below this PID a process is treated as OS-owned.
+  min_pid: 3
+
+files:
+  protected_prefixes:
+    - /bin/
+    - /sbin/
+    - /usr/bin/
+    - /usr/sbin/
+    - /lib/
+    - /lib64/
+    - /usr/lib/
+    - /boot/
+    - /proc/
+    - /sys/
+    - C:\Windows\System32\
+    - C:\Windows\SysWOW64\
+  protected_paths:
+    - /etc/passwd
+    - /etc/shadow
+    - /etc/sudoers
+    - /etc/fstab
+    - /etc/ssh/sshd_config
+  # Known-good file hashes (lowercase SHA-256). Also suppresses YARA-driven quarantine.
+  sha256: []
