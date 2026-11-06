@@ -300,6 +300,11 @@ class Store:
             ).fetchall()
         return [self._action_row(r) for r in rows]
 
+    def count_actions(self, state: str) -> int:
+        with self.lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM actions WHERE state=?", (state,)).fetchone()
+        return int(row["n"])
+
     def transition_action(
         self,
         action_id: str,
@@ -349,10 +354,12 @@ class Store:
         return [self._action_row(r) for r in rows]
 
     def expirable_actions(self, now: float) -> list[dict[str, Any]]:
+        placeholders = ",".join("?" for _ in OPEN_STATES)
         with self.lock:
             rows = self._conn.execute(
-                "SELECT * FROM actions WHERE expires_at IS NOT NULL AND expires_at<? AND state IN (?,?,?)",
-                (now, *[s.value for s in OPEN_STATES]),
+                "SELECT * FROM actions WHERE expires_at IS NOT NULL AND expires_at<? "  # noqa: S608
+                f"AND state IN ({placeholders})",
+                [now, *[s.value for s in OPEN_STATES]],
             ).fetchall()
         return [self._action_row(r) for r in rows]
 

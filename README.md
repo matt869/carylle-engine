@@ -1,5 +1,7 @@
 # Carylle
 
+[![CI](https://github.com/matt869/carylle-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/matt869/carylle-engine/actions/workflows/ci.yml)
+
 Endpoint detection and response that uses an LLM for judgement and deterministic code for
 authority. Agents watch processes, files and network activity on your hosts. The server triages
 that telemetry with rules, asks Claude to assess what looks suspicious, and contains threats
@@ -162,6 +164,8 @@ pytest
 The suite covers each pipeline stage, the real Anthropic SDK against a mock transport, a deliberately
 compromised model, real process termination and file quarantine on child processes and temp files,
 and end-to-end runs against a live server. Tests never touch anything they didn't create.
+
+CI runs `ruff check` and the full suite on every push and pull request.
 
 Purple team reports (`purple-report.md`, `.json`) score each scenario and list ATT&CK coverage.
 

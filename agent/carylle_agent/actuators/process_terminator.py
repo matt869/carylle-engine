@@ -90,15 +90,21 @@ def terminate_process(target: dict[str, Any], safelist: AgentSafelist, grace_sec
     except psutil.Error:
         pass
 
+    # Keep going past a descendant that refuses: stopping early would leave its siblings
+    # running. Only the target itself refusing means the action failed outright.
+    signalled: list[psutil.Process] = []
     for victim in victims:
         try:
             victim.terminate()
+            signalled.append(victim)
         except psutil.NoSuchProcess:
             pass
         except psutil.Error as exc:
-            return ActionResult("failed", f"terminate denied: {type(exc).__name__}")
+            if victim is proc:
+                return ActionResult("failed", f"terminate denied: {type(exc).__name__}")
+            skipped += 1
 
-    _, alive = psutil.wait_procs(victims, timeout=grace_seconds)
+    _, alive = psutil.wait_procs(signalled, timeout=grace_seconds)
     for victim in alive:
         try:
             victim.kill()
@@ -109,7 +115,8 @@ def terminate_process(target: dict[str, Any], safelist: AgentSafelist, grace_sec
     if alive:
         return ActionResult("failed", f"{len(alive)} process(es) survived kill")
 
-    detail = f"terminated pid {pid} and {len(victims) - 1} descendant(s)"
+    descendants = sum(1 for v in signalled if v is not proc)
+    detail = f"terminated pid {pid} and {descendants} descendant(s)"
     if skipped:
         detail += f"; left {skipped} protected or unreadable descendant(s) running"
     log.warning("Actuator: %s", detail)

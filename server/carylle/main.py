@@ -14,11 +14,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .config import MissingSecrets, Secrets, Settings, load_secrets, load_settings
+from .config import MissingSecrets, Secrets, ServerSettings, Settings, load_secrets, load_settings
 from .models import ActionState, EventType
 from .pipeline.engine import Engine
 from .pipeline.normalizer import normalize_batch
@@ -50,6 +51,67 @@ class Decision(BaseModel):
 class ModeChange(BaseModel):
     mode: str
     operator: str = Field(min_length=1, max_length=128)
+
+
+class _BodyTooLarge(HTTPException):
+    # An HTTPException, because FastAPI turns any other error raised while it reads the
+    # body into a generic 400.
+    def __init__(self) -> None:
+        super().__init__(413, "request body too large")
+
+
+class BodyLimit:
+    """Cap request bodies, counting the bytes actually received.
+
+    Checking Content-Length alone is not enough: a chunked upload carries no length
+    header and would otherwise be read into memory whole.
+    """
+
+    def __init__(self, app: ASGIApp, server: ServerSettings):
+        self.app = app
+        # Read the limit per request, so a settings change applies without a restart.
+        self.server = server
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        max_bytes = self.server.max_body_bytes
+
+        length = dict(scope["headers"]).get(b"content-length")
+        if length is not None:
+            try:
+                declared = int(length)
+            except ValueError:
+                await JSONResponse({"detail": "invalid content-length"}, 400)(scope, receive, send)
+                return
+            if declared > max_bytes:
+                await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
+                return
+
+        received = 0
+        started = False
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > max_bytes:
+                    raise _BodyTooLarge
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge:
+            if not started:
+                await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
 
 
 @dataclass
@@ -95,7 +157,10 @@ def create_app(
     wake = threading.Event()
 
     def worker_tick() -> None:
-        services.engine.process_pending()
+        # Drain a backlog before sleeping, so a burst isn't worked off one poll at a time.
+        batch = 1000
+        while services.engine.process_pending(batch).events >= batch:
+            pass
         services.orchestrator.expire_stale()
 
     @asynccontextmanager
@@ -126,16 +191,7 @@ def create_app(
     app.state.services = services
     app.state.worker_tick = worker_tick
 
-    @app.middleware("http")
-    async def limit_body(request: Request, call_next):
-        length = request.headers.get("content-length")
-        try:
-            too_large = length is not None and int(length) > settings.server.max_body_bytes
-        except ValueError:
-            return JSONResponse({"detail": "invalid content-length"}, status.HTTP_400_BAD_REQUEST)
-        if too_large:
-            return JSONResponse({"detail": "request body too large"}, 413)
-        return await call_next(request)
+    app.add_middleware(BodyLimit, server=settings.server)
 
     def _bearer(authorization: str | None) -> str:
         if not authorization or not authorization.lower().startswith("bearer "):
@@ -199,7 +255,7 @@ def create_app(
             "llm_enabled": settings.llm.enabled,
             "llm_model": settings.llm.model,
             "attack_techniques_loaded": len(services.mapper.techniques),
-            "pending_approvals": len(services.store.list_actions(state=ActionState.PENDING_APPROVAL.value)),
+            "pending_approvals": services.store.count_actions(ActionState.PENDING_APPROVAL.value),
             "agents": len(services.store.list_agents()),
         }
 

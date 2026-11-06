@@ -70,9 +70,22 @@ class ActionLedger:
 
     def verify(self) -> dict[str, Any]:
         """Walk the whole chain. Returns ok plus the first problem found."""
+        anchor: dict[str, Any] | None = None
+        if self._anchor and self._anchor.exists():
+            try:
+                anchor = json.loads(self._anchor.read_text(encoding="utf-8"))
+                if not isinstance(anchor.get("seq"), int) or not isinstance(anchor.get("hash"), str):
+                    raise ValueError("bad fields")
+            except (OSError, ValueError, AttributeError):
+                return self._bad(0, GENESIS, "anchor file is unreadable or malformed")
+
         expected_seq = 1
         prev_hash = GENESIS
         count = 0
+        # Hash of the entry the anchor points at. The anchor can lag the head by an entry
+        # if the server stopped between the insert and the anchor write, so a lagging
+        # anchor is fine as long as the entry it names is unchanged.
+        hash_at_anchor: str | None = None
         with self._store.lock:
             cursor = self._store.conn.execute("SELECT * FROM ledger ORDER BY seq")
             for row in cursor:
@@ -84,17 +97,18 @@ class ActionLedger:
                 if not hmac.compare_digest(digest, row["hash"]):
                     return self._bad(count, prev_hash, f"hash mismatch at seq {row['seq']}")
                 prev_hash = row["hash"]
+                if anchor is not None and row["seq"] == anchor["seq"]:
+                    hash_at_anchor = row["hash"]
                 expected_seq += 1
                 count += 1
 
         anchor_status = "not_configured"
         if self._anchor:
-            if self._anchor.exists():
-                anchor = json.loads(self._anchor.read_text(encoding="utf-8"))
+            if anchor is not None:
                 if anchor["seq"] > count:
                     return self._bad(count, prev_hash, f"anchor at seq {anchor['seq']} but only {count} entries: truncated")
-                if anchor["seq"] == count and anchor["hash"] != prev_hash:
-                    return self._bad(count, prev_hash, "head does not match the anchor")
+                if anchor["seq"] > 0 and not hmac.compare_digest(hash_at_anchor or "", anchor["hash"]):
+                    return self._bad(count, prev_hash, f"entry {anchor['seq']} does not match the anchor")
                 anchor_status = "ok"
             elif count:
                 return self._bad(count, prev_hash, "ledger has entries but the anchor is missing")

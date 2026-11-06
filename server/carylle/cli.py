@@ -7,10 +7,14 @@ import datetime as dt
 import ipaddress
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from .security import derive_agent_token, generate_signing_keypair, new_secret
+
+# Agent IDs show up in logs, ledger entries and operator views, so keep them plain.
+AGENT_ID = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 
 
 def cmd_init_env(args: argparse.Namespace) -> int:
@@ -36,6 +40,9 @@ def cmd_agent_token(args: argparse.Namespace) -> int:
     master = os.environ.get("CARYLLE_AGENT_MASTER_SECRET")
     if not master:
         print("CARYLLE_AGENT_MASTER_SECRET is not set", file=sys.stderr)
+        return 2
+    if not AGENT_ID.match(args.agent_id):
+        print("agent ID must be 1-128 characters of letters, digits, '.', '_' or '-'", file=sys.stderr)
         return 2
     print(derive_agent_token(master, args.agent_id))
     return 0
@@ -73,12 +80,13 @@ def cmd_gen_cert(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     (out / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     key_path = out / "key.pem"
-    key_path.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
-        )
-    )
-    key_path.chmod(0o600)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    # Create the key file owner-only from the start, so it is never briefly readable.
+    if key_path.exists():
+        key_path.unlink()
+    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(pem)
     print(f"Wrote {out / 'cert.pem'} and {key_path}")
     return 0
 
@@ -93,8 +101,16 @@ def cmd_verify_ledger(args: argparse.Namespace) -> int:
     if not key:
         print("CARYLLE_LEDGER_KEY is not set", file=sys.stderr)
         return 2
-    store = Store(settings.server.db_path)
-    result = ActionLedger(store, key, settings.server.ledger_anchor_path).verify()
+    db_path = Path(settings.server.db_path)
+    if not db_path.is_file():
+        # Opening a missing path would create an empty database and report it as intact.
+        print(f"No database at {db_path}", file=sys.stderr)
+        return 2
+    store = Store(str(db_path))
+    try:
+        result = ActionLedger(store, key, settings.server.ledger_anchor_path).verify()
+    finally:
+        store.close()
     print(json.dumps(result, indent=2))
     return 0 if result["ok"] else 1
 

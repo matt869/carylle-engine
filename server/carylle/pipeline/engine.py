@@ -182,10 +182,19 @@ class Engine:
             result.cases += 1
             result.actions += created
 
-    def _context(self, agent_id: str, trigger: list[NormalizedEvent], now: float) -> list[NormalizedEvent]:
-        """Trigger events first, so the cap can't push out the reason the case exists."""
+    def _context(
+        self, agent_id: str, trigger: list[NormalizedEvent], priority: list[str], now: float
+    ) -> list[NormalizedEvent]:
+        """Priority events first, then the rest of the trigger, then related history.
+
+        The cap must never push out the reason the case exists. A rule hit on an event
+        that didn't make the cut would recommend an action on a target the case can't
+        name, and containment would silently not happen.
+        """
         cap = self.settings.max_case_events
-        selected = trigger[:cap]
+        rank = {event_id: i for i, event_id in enumerate(priority)}
+        ordered = sorted(trigger, key=lambda e: rank.get(e.event_id, len(rank)))
+        selected = ordered[:cap]
         keys = set().union(*(relation_keys(e) for e in selected)) if selected else set()
         seen = {e.event_id for e in selected}
         since = now - self.settings.context_window_seconds
@@ -230,7 +239,9 @@ class Engine:
     def _open_case(
         self, agent_id: str, trigger: list[NormalizedEvent], assessment: Assessment, burst: int, now: float
     ) -> int:
-        events = self._context(agent_id, trigger, now)
+        # Action targets first, strongest rule first, then everything else the rules flagged.
+        priority = list(dict.fromkeys([r.event_id for r in assessment.recommended_actions()] + assessment.event_ids))
+        events = self._context(agent_id, trigger, priority, now)
         fingerprint = case_fingerprint(agent_id, assessment, trigger)
         verdict = self._reason(agent_id, events, assessment, burst, fingerprint, now)
 

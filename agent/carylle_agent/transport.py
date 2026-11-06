@@ -194,5 +194,7 @@ class Transport:
                     return False
             except httpx.HTTPError as exc:
                 log.warning("Could not report result for %s: %s", command_id, type(exc).__name__)
-            time.sleep(min(2 ** attempt, 5))
+            if attempt + 1 < attempts:
+                time.sleep(min(2 ** attempt, 5))
+        log.error("Gave up reporting result for %s after %d attempts", command_id, attempts)
         return False

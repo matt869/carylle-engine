@@ -1,0 +1,3 @@
+# Keep LF in the repo and on checkout: these files run in Linux containers and systemd.
+* text=auto eol=lf
+*.json -diff

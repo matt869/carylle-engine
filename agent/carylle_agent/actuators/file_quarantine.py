@@ -81,27 +81,46 @@ class FileQuarantine:
 
         actual = sha256_file(stored)
         if actual != expected:
+            reason = "file could not be read for hashing" if actual is None else "file content differs from the evidence"
             try:
                 _move(str(stored), path)
             except OSError as exc:
-                log.error("Could not put back %s after hash mismatch, kept as %s", path, stored)
-                return ActionResult("failed", f"hash mismatch and restore failed: {type(exc).__name__}")
-            return ActionResult("refused", "file content differs from the evidence; left in place")
+                log.error("Could not put back %s after a failed hash check, kept as %s", path, stored)
+                self._write_metadata(quarantine_id, path, actual, info)
+                return ActionResult("failed", f"{reason} and restore failed: {type(exc).__name__}")
+            return ActionResult("refused", f"{reason}; left in place")
 
-        os.chmod(stored, stat.S_IRUSR)
+        try:
+            os.chmod(stored, stat.S_IRUSR)
+        except OSError:
+            log.warning("Could not make %s read-only", stored)
+        if not self._write_metadata(quarantine_id, path, actual, info):
+            # The file is contained, but without its record it can't be restored by ID.
+            return ActionResult("succeeded", f"quarantined as {quarantine_id}; metadata write failed, original path {path}")
+        log.warning("Actuator: quarantined %s as %s", path, quarantine_id)
+        return ActionResult("succeeded", f"quarantined as {quarantine_id}")
+
+    def _write_metadata(self, quarantine_id: str, path: str, sha256: str | None, info: os.stat_result) -> bool:
+        """Record where a quarantined file came from, so restore can put it back."""
         metadata = {
             "id": quarantine_id,
             "original_path": path,
-            "sha256": actual,
+            "sha256": sha256,
             "quarantined_at": time.time(),
             "mode": stat.S_IMODE(info.st_mode),
             "uid": getattr(info, "st_uid", None),
             "gid": getattr(info, "st_gid", None),
             "size": info.st_size,
         }
-        (self.directory / f"{quarantine_id}.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        log.warning("Actuator: quarantined %s as %s", path, quarantine_id)
-        return ActionResult("succeeded", f"quarantined as {quarantine_id}")
+        meta_path = self.directory / f"{quarantine_id}.json"
+        tmp = meta_path.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            os.replace(tmp, meta_path)
+        except OSError:
+            log.exception("Could not write quarantine metadata for %s (original %s)", quarantine_id, path)
+            return False
+        return True
 
     def list_items(self) -> list[dict[str, Any]]:
         if not self.directory.exists():

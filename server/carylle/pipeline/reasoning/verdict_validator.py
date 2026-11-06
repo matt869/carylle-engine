@@ -154,7 +154,11 @@ def validate_verdict(
             issues.append("model rated below the deterministic floor; floor applied")
             confidence = max(confidence, assessment.score)
         for rec in assessment.recommended_actions():
-            if supports_action(by_id[rec.event_id], rec.action) and (rec.action, rec.event_id) not in seen:
+            event = by_id.get(rec.event_id)
+            if event is None:
+                issues.append(f"deterministic evidence {rec.event_id[:16]!r} is outside the case window")
+                continue
+            if supports_action(event, rec.action) and (rec.action, rec.event_id) not in seen:
                 seen.add((rec.action, rec.event_id))
                 actions.append(rec)
         for technique in assessment.techniques:

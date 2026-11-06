@@ -51,10 +51,13 @@ class ReplayGuard:
         self._path = Path(state_dir) / "seen_commands.json"
         self._seen: dict[str, float] = {}
         try:
-            self._seen = json.loads(self._path.read_text(encoding="utf-8"))
+            loaded = json.loads(self._path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("replay state is not an object")
+            self._seen = {str(k): float(v) for k, v in loaded.items()}
         except FileNotFoundError:
             pass
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             log.warning("Replay state unreadable: starting fresh; expiry still bounds replay")
 
     def first_time(self, command_id: str, expires_at: float) -> bool:
