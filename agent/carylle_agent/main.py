@@ -92,6 +92,7 @@ class Agent:
                 exclude=[self.config.quarantine_dir, self.config.spool_dir, self.config.state_dir],
                 max_hash_bytes=file_cfg.get("max_hash_bytes", 64 * 1024 * 1024),
                 debounce_seconds=file_cfg.get("debounce_seconds", 0.5),
+                max_delay_seconds=file_cfg.get("max_delay_seconds", 5.0),
             )
 
         network_cfg = sensors.get("network_sniffer") or {}

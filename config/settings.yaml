@@ -88,6 +88,8 @@ agent:
       paths: [/tmp, /var/tmp, /dev/shm, /etc/cron.d, /etc/systemd/system, /root/.ssh, /var/www]
       max_hash_bytes: 67108864
       debounce_seconds: 0.5
+      # Report a file that never goes quiet after this long anyway.
+      max_delay_seconds: 5.0
     network_sniffer:
       enabled: true
       # auto: raw DNS capture when scapy and CAP_NET_RAW are available, plus connection polling.

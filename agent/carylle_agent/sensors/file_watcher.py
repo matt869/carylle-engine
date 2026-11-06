@@ -44,6 +44,7 @@ class FileWatcher(threading.Thread):
         exclude: list[str] | None = None,
         max_hash_bytes: int = 64 * 1024 * 1024,
         debounce_seconds: float = 0.5,
+        max_delay_seconds: float = 5.0,
     ):
         super().__init__(name="file-watcher", daemon=True)
         self._emit = emit
@@ -54,7 +55,12 @@ class FileWatcher(threading.Thread):
         self._exclude = tuple(os.path.abspath(p) + os.sep for p in exclude or [])
         self._max_hash_bytes = max_hash_bytes
         self._debounce = debounce_seconds
-        self._pending: dict[str, tuple[str, str, float]] = {}
+        # Debounce waits for a quiet moment. A file written to without pause never has
+        # one, so it is reported after this long regardless. Otherwise a slow encryptor,
+        # or an attacker touching a dropped file every few hundred ms, would stay unseen.
+        self._max_delay = max_delay_seconds
+        # path -> (first action, dest, last event time, first event time)
+        self._pending: dict[str, tuple[str, str, float, float]] = {}
         self._lock = threading.Lock()
         self.watching: list[str] = []
         self.ready = threading.Event()
@@ -66,19 +72,23 @@ class FileWatcher(threading.Thread):
         with self._lock:
             # One save produces a flurry of events, so keep the earliest action:
             # "created then modified" should still be reported as created.
+            now = time.monotonic()
             previous = self._pending.get(path)
             first_action = previous[0] if previous and action == "modified" else action
-            self._pending[path] = (first_action, dest, time.monotonic())
+            first_seen = previous[3] if previous else now
+            self._pending[path] = (first_action, dest, now, first_seen)
 
     def _flush(self, force: bool = False) -> None:
         now = time.monotonic()
         with self._lock:
             ready = {
-                path: item for path, item in self._pending.items() if force or now - item[2] >= self._debounce
+                path: item
+                for path, item in self._pending.items()
+                if force or now - item[2] >= self._debounce or now - item[3] >= self._max_delay
             }
             for path in ready:
                 del self._pending[path]
-        for path, (action, dest, _) in ready.items():
+        for path, (action, dest, _, _) in ready.items():
             try:
                 self._process(path, action, dest)
             except Exception:
