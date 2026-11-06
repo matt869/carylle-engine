@@ -154,3 +154,67 @@ class TestAgentState:
         assert result.status == "refused" and "could not be read" in result.detail
         assert path.read_bytes() == b"malicious"
         assert list(quarantine.directory.glob("*.bin")) == []
+
+
+class TestFileWatcherDebounce:
+    def test_a_file_that_never_goes_quiet_is_still_reported(self, tmp_path, monkeypatch):
+        import threading
+
+        from carylle_agent.sensors import file_watcher as fw
+
+        clock = {"now": 100.0}
+        monkeypatch.setattr(fw.time, "monotonic", lambda: clock["now"])
+        events: list[dict] = []
+        watcher = fw.FileWatcher(
+            events.append, threading.Event(), [str(tmp_path)], debounce_seconds=0.5, max_delay_seconds=5.0
+        )
+        target = tmp_path / "payload.bin"
+        target.write_bytes(b"x")
+
+        watcher.record(str(target), "created")
+        # Touched every 0.2 s: never quiet for the 0.5 s debounce.
+        for _ in range(24):
+            clock["now"] += 0.2
+            watcher.record(str(target), "modified")
+            watcher._flush()
+        assert events == [], "reported before max_delay"
+        clock["now"] += 0.2
+        watcher.record(str(target), "modified")
+        watcher._flush()
+        assert len(events) == 1 and events[0]["data"]["action"] == "created"
+
+
+class TestLoopback:
+    def test_every_spelling_of_loopback_is_local(self):
+        from carylle_agent.sensors.network_sniffer import is_local
+
+        for ip in ["127.0.0.1", "127.8.9.10", "::1", "::ffff:127.0.0.1", "::1%lo"]:
+            assert is_local(ip), ip
+        for ip in ["203.0.113.10", "::ffff:203.0.113.10", "2001:db8::1", "", "not-an-ip"]:
+            assert not is_local(ip), ip
+
+
+class TestMoreSecrets:
+    def test_common_cloud_keys_are_redacted(self):
+        from carylle.pipeline.reasoning.sanitizer import redact_secrets
+
+        leaks = {
+            "openai_key": "sk-proj-" + "A1b2C3d4" * 5,
+            "google_api_key": "AIza" + "B" * 35,
+            "gitlab_token": "glpat-" + "x1Y2z3" * 4,
+        }
+        for label, secret in leaks.items():
+            cleaned, count = redact_secrets(f"curl -H 'key: {secret}' https://example.com")
+            assert secret not in cleaned and f"REDACTED:{label}" in cleaned and count == 1, (label, cleaned)
+
+    def test_anthropic_keys_keep_their_own_label(self):
+        from carylle.pipeline.reasoning.sanitizer import redact_secrets
+
+        cleaned, _ = redact_secrets("sk-ant-api03-" + "q" * 40)
+        assert "REDACTED:anthropic_key" in cleaned and "openai_key" not in cleaned
+
+    def test_ordinary_words_are_left_alone(self):
+        from carylle.pipeline.reasoning.sanitizer import redact_secrets
+
+        text = "pip install scikit-learn && ./sk-tool --help"
+        assert redact_secrets(text) == (text, 0)
